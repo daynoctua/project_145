@@ -1,0 +1,502 @@
+#include <stdio.h> 
+#include <wiringPi.h>
+#include <iostream>
+#include <unistd.h>
+#include <pthread.h>
+#include <fstream>
+
+//nustatomi sviesu isejimo jungtys su atitinkamais vardais
+const int P1R=8;
+const int P1G=7;
+const int P1Z=2;
+const int S1R=9;
+const int S1G=0;
+const int S1Z=3;
+const int P2R=13;
+const int P2G=14;
+const int P2Z=22;
+const int S2R=12;
+const int S2G=21;
+const int S2Z=23;
+
+//zalios ir geltonos sviesu trukmes
+const int ztrukme=10000;//20 000 - 20s
+const int gtrukme=2000;
+
+using namespace std;
+
+//nustatomi sviesu rinkiniai
+int gpioarr [] = {8,9,7,0,2,3,12,13,14,21,22,23,-1};//Visos sviesos
+int allY[]={7,0,14,21,-1}; //visos geltonos
+int Sa1[]={8,7,2,9,0,3,-1}; //Visa pirma sankryza
+int Sa2[]={13,14,22,12,21,23,-1};// visa antra sankryza
+
+// FUNKCIJOS
+int inputread()
+{
+	int read;
+	ifstream checkfile;
+	checkfile.open ("inputs.txt");
+	checkfile>>read;
+	checkfile.close();
+	return(read);
+}
+int ssread()
+{
+	int read;
+	ifstream checkfile;
+	checkfile.open ("startstop.txt");
+	checkfile>>read;
+	checkfile.close();
+	return(read);
+}
+void set(int PIN,char sett)
+{
+	digitalWrite(PIN,sett);
+}
+void setall(int array[],char sett )
+{
+	int i=0;
+	int j=0;
+	while (j!=-1)
+	{
+		digitalWrite (array[i], sett);
+		i++;
+		j=array[i];
+	}
+}
+void blink1(int PIN,int r1)
+{
+	for (int i=0; i<4;i++)
+	{
+		digitalWrite (PIN, HIGH);
+		delay(500);
+		digitalWrite (PIN, LOW);
+		delay(500);
+		if (i==1)
+		{	
+			digitalWrite(r1, LOW);
+			delay(100);
+			digitalWrite(r1, HIGH);
+		}
+	}
+}
+void blink2(int PIN, int PIN2,int r1, int r2)
+{
+	for (int i=0; i<4;i++)
+	{
+		digitalWrite (PIN, HIGH);
+		digitalWrite (PIN2, HIGH);
+		delay(500);
+		digitalWrite (PIN, LOW);
+		digitalWrite (PIN2, LOW);
+		delay(500);
+		if (i==1)
+		{	
+			digitalWrite(r1, LOW);
+			digitalWrite(r2, LOW);
+			delay(100);
+			digitalWrite(r1, HIGH);
+			digitalWrite(r2, HIGH);
+		}
+	}
+}
+void blink(int PIN, int PIN2)
+{
+	digitalWrite(PIN, LOW);
+	digitalWrite(PIN2, LOW);
+	delay(100);
+	digitalWrite(PIN, HIGH);
+	digitalWrite(PIN2, HIGH);
+}
+void test()
+{
+	int checknum;
+	checknum=inputread();
+	while (checknum==7)
+	{
+		checknum=inputread();
+		setall(gpioarr, HIGH);
+		for (int i=0; i<12; i++)
+		{	
+			digitalWrite (gpioarr[i], LOW);
+			delay (100);
+			digitalWrite (gpioarr[i], HIGH);
+		}
+		for (int i=11; i>=0;i--)
+		{
+			digitalWrite (gpioarr[i], LOW);
+			delay (100);
+			digitalWrite (gpioarr[i], HIGH);
+		}
+	}
+	setall(gpioarr, LOW);
+}
+void *buttons(void *arg) // Rezimu mygtuku nuskaitymas
+{
+	ifstream checkfile;
+	checkfile.open ("inputs.txt");
+	int pressed;
+	checkfile>>pressed;
+	checkfile.close();
+	if (pressed==666)
+	{	
+		pressed=3;
+		remove("inputs.txt");
+		ofstream outfile("inputs.txt");
+		outfile<<pressed;
+		outfile.close();		
+	}
+	cout<<endl<<"BUTTONS inital: "<<pressed<<endl;
+	while (pressed!=666)
+	{
+		if (digitalRead(10)==1 && digitalRead(6)==1 && digitalRead(5)==1)
+		pressed=666;
+		else if (digitalRead(10)==1)
+		pressed=1;
+		else if (digitalRead(6)==1)
+		pressed=2;
+		else if (digitalRead(5)==1)
+		pressed=3;
+		else if (digitalRead(16)==1)
+		pressed=6;
+		else if (digitalRead(15)==1)
+		pressed=7;
+		ifstream checkfile;
+		checkfile.open ("inputs.txt");
+		int checknum;		
+		checkfile>>checknum;
+		if (pressed!=checknum)
+		{
+			remove("inputs.txt");
+			ofstream outfile("inputs.txt");
+			outfile<<pressed;
+			outfile.close();			
+			cout<<"Paspausta: "<<pressed<<endl;
+		}
+		checkfile.close();			
+		usleep(5000);
+	}
+
+	pthread_exit(NULL);
+}
+void *startstop(void *arg) //START ir STOP mygtuku nuskaitymas
+{
+	remove("startstop.txt");
+	ofstream outfile("startstop.txt");
+	outfile<<1;
+	outfile.close();
+	int pressed=1;
+	int lol=1;
+	while (lol!=0)
+	{
+		if (digitalRead(4)==1)
+		{
+			pressed=1;
+			cout<<flush;
+		}
+		else if (digitalRead(1)==1)
+		{
+			pressed=2;
+			cout<<flush;
+		}
+		ifstream checkfile;
+		checkfile.open ("startstop.txt");
+		int checknum;		
+		checkfile>>checknum;
+		if (pressed!=checknum)
+		{
+			remove("startstop.txt");
+			ofstream outfile("startstop.txt");
+			outfile<<pressed;
+			outfile.close();
+			cout<<"STARTSTOP: "<<pressed<<endl;
+		}
+		checkfile.close();			
+		usleep(5000);
+	}
+
+	pthread_exit(NULL);
+}
+void *jutikliai1(void *arg) //"pogrindiniu" jutikliu nuskaitymas pirmoje sankryzoje
+{
+	int checknum;
+	int interrupt=1;
+	checknum=inputread();
+	while (checknum==2)
+	{
+		setall(Sa1,LOW);
+		set(P1Z, HIGH);
+		set(S1R, HIGH);
+		if (interrupt==1)//sulaikomas jutikliu darbas, jei pries tai suveike
+		{
+			delay(ztrukme);//ztrukme 
+			interrupt=0;
+		}
+		if (digitalRead(26)==1 || digitalRead(11)==1)
+		{
+			blink1(P1Z, S1R);
+			set(P1Z, LOW);
+			set(P1G, HIGH);
+			set(S1G, HIGH);
+			delay(gtrukme);
+			setall(Sa1, LOW);
+			set(S1Z, HIGH);
+			set(P1R, HIGH);
+			delay(10000);//salutiniame kelyje zalia degs 10 s -10000
+			blink1(S1Z, P1R);
+			set(S1Z, LOW);
+			set(P1G, HIGH);
+			set(S1G, HIGH);
+			delay(gtrukme);
+			interrupt=1;
+		}
+		usleep(8000);
+		checknum=inputread();
+	}
+	pthread_exit(NULL);
+}
+void *jutikliai2(void *arg) //"pogrindiniu" jutikliu nuskaitymas antroje sankryzoje
+{
+	int checknum;
+	int interrupt=1;
+	checknum=inputread();
+	while (checknum==2)
+	{
+		setall(Sa2,LOW);
+		set(P2Z, HIGH);
+		set(S2R, HIGH);
+		if (interrupt==1)
+		{
+			delay(ztrukme);//ztrukme 
+			interrupt=0;
+		}
+		if (digitalRead(27)==1 || digitalRead(28)==1)
+		{
+			blink1(P2Z, S2R);
+			set(P2Z, LOW);
+			set(P2G, HIGH);
+			set(S2G, HIGH);
+			delay(gtrukme);
+			setall(Sa2, LOW);
+			set(S2Z, HIGH);
+			set(P2R, HIGH);
+			delay(10000);//salutiniame kelyje zalia degs 10 s -10000
+			blink1(S2Z, P2R);
+			set(S2Z, LOW);
+			set(P2G, HIGH);
+			set(S2G, HIGH);
+			delay(gtrukme);
+			interrupt=1;
+		}
+		usleep(8000);
+		checknum=inputread();
+	}
+	pthread_exit(NULL);
+}
+void modern()
+{
+	int checknum;
+	pthread_t Jutikliai1; 
+	pthread_create(&Jutikliai1, NULL, &jutikliai1, NULL);
+	usleep(100);
+	pthread_t Jutikliai2; 
+	pthread_create(&Jutikliai2, NULL, &jutikliai2, NULL);
+	checknum=inputread();
+	while (checknum==2)
+	{
+		checknum=inputread();
+		usleep(10000);
+	}
+	setall(gpioarr, LOW);
+	setall(allY,HIGH);
+	delay(2000);
+	setall(allY,LOW);
+}
+void idle()
+{
+	setall(gpioarr, LOW);
+	int checknum;	
+	checknum=inputread();
+	while (checknum==3)
+	{
+		checknum=inputread();
+		for(int j=0;j<=4;j++)
+		{
+			digitalWrite (allY[j], HIGH);
+			cout<<flush; 
+		}
+		usleep(950000);
+		for (int k=0;k<=4;k++)
+		{
+			digitalWrite (allY[k], LOW);
+			cout<<flush;
+		}
+		usleep(950000);
+	}
+}
+void standart()
+{
+	pthread_t StaStoMygtukai; 
+	pthread_create(&StaStoMygtukai, NULL, &startstop, NULL);
+	int checknum;
+	int ssnum;
+	setall(gpioarr,LOW);
+	setall(allY,HIGH);
+	delay(3000);
+	checknum=inputread();
+	while (checknum==1 || checknum==5 || checknum==4)
+	{
+		setall(gpioarr,LOW);
+		set(P1Z,HIGH);
+		set(S1R,HIGH);
+		set(P2R,HIGH);
+		set(S2Z, HIGH);
+		delay(ztrukme);
+		checknum=inputread();
+		ssnum=ssread();
+		if (ssnum == 2)
+		while (ssnum ==2 && checknum==1)
+		{
+			usleep(10000);
+			ssnum=ssread();
+			checknum=inputread();
+		}
+		if (checknum !=1)
+		break;
+		blink2(P1Z,S2Z,S1R,P2R);
+		setall(allY,HIGH);
+		delay(gtrukme);
+		checknum=inputread();
+		if (checknum !=1)
+		break;
+		setall(gpioarr,LOW);
+		set(S1Z, HIGH);
+		set(P1R, HIGH);
+		set(S2R,HIGH);
+		set(P2Z,HIGH);
+		delay(ztrukme);
+		checknum=inputread();
+		ssnum=ssread();
+		if (ssnum == 2)
+		while (ssnum ==2 && checknum==1)
+		{
+			usleep(10000);
+			ssnum=ssread();
+			checknum=inputread();
+		}
+		
+		blink2(P2Z,S1Z,P1R,S2R);
+		setall(allY,HIGH);
+		delay(gtrukme);
+		if (checknum !=1)
+		break;
+		checknum=inputread();
+	}
+	setall(allY,HIGH);
+	delay(1000);
+	setall(allY,LOW);
+}
+void zalia1()
+{
+	int checknum;
+	checknum=inputread();
+	setall(gpioarr,LOW);
+	setall(allY,HIGH);
+	delay(1000);
+	setall(allY,LOW);
+	set(P1Z, HIGH);
+	set(S1R, HIGH);
+	set(P2Z, HIGH);
+	set(S2R, HIGH);
+	while (checknum==6)
+	{
+		usleep(5000);
+		checknum=inputread();
+	}
+	setall(gpioarr,LOW);
+	setall(allY,HIGH);
+	delay(1000);
+	setall(allY,LOW);
+}
+void zalia2()
+{
+	int checknum;
+	checknum=inputread();
+	setall(gpioarr,LOW);
+	setall(allY,HIGH);
+	delay(1000);
+	setall(allY,LOW);
+	set(P1R, HIGH);
+	set(S1Z, HIGH);
+	set(P2R, HIGH);
+	set(S2Z, HIGH);
+	while (checknum==7)
+	{
+		usleep(5000);
+		checknum=inputread();
+	}
+	setall(gpioarr,LOW);
+	setall(allY,HIGH);
+	delay(1000);
+	setall(allY,LOW);
+}
+
+//PROGRAMA
+int main ()
+{ 	
+	//Nustatomos isejimu/iejimu jungtys
+	wiringPiSetup (); 
+	pinMode (P1R, OUTPUT);
+	pinMode (P1G, OUTPUT);
+	pinMode (P1Z, OUTPUT);
+	pinMode (S1R, OUTPUT);
+	pinMode (S1G, OUTPUT);
+	pinMode (S1Z, OUTPUT);
+	pinMode (P2R, OUTPUT);
+	pinMode (P2G, OUTPUT);
+	pinMode (P2Z, OUTPUT);
+	pinMode (S2R, OUTPUT);
+	pinMode (S2G, OUTPUT);
+	pinMode (S2Z, OUTPUT);
+	pinMode (15, INPUT);
+	pinMode (16, INPUT);
+	pinMode (1, INPUT);
+	pinMode (4, INPUT);
+	pinMode (5, INPUT);
+	pinMode (6, INPUT);
+	pinMode (10, INPUT);
+	pinMode (11, INPUT);
+	pinMode (26, INPUT);
+	pinMode (27, INPUT);
+	pinMode (28, INPUT);
+	setall(gpioarr, LOW); // Visos sviesos isjungiamos
+	pthread_t mygtukai; //Naujo proceso pavadinimas
+	pthread_create(&mygtukai, NULL, &buttons, NULL);//startuojamas naujas procesas 'mygtukai'
+	int checknum;
+	usleep(200);
+	checknum=inputread();	
+ 	while (1)
+	{ 
+		
+		checknum=inputread();
+		if (checknum==1)
+		{cout<<"Ijungtas standartinis rezimas"<<endl; standart();}
+		else if (checknum==2)
+		{cout<<"Ijungtas modernus rezimas"<<endl; modern();}
+		else if (checknum==3)
+		{cout<<"Ijungtas nereguliojamas rezimas"<<endl; idle();}
+		else if (checknum==6)
+		{cout<<"Ijungtas Zalia1"<<endl; zalia1();}
+		else if (checknum==7)
+		{cout<<"ijungta Zalia2"<<endl; zalia2();}
+		else if (checknum==666)
+		break;
+	}
+	setall(gpioarr, LOW);
+	cout<<"WAAAAT";
+	cin>>checknum;
+	pthread_exit(NULL);
+	return 0 ;
+}
+
